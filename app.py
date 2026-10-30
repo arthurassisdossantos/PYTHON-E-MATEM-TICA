@@ -128,20 +128,46 @@ col_mapa, col_piramide = st.columns(2)
 
 with col_mapa:
     st.subheader("🗺️ Mapa Coroplético (Crescimento por UF)")
+    
+    # Agrupa os dados e força a coluna UF a ser texto (string) para evitar conflitos com o GeoJSON
     df_mapa = df_filtrado.groupby('UF', as_index=False)['CRESCIMENTO_PCT'].mean()
+    df_mapa['UF'] = df_mapa['UF'].astype(str)
+    
     geojson_brasil = carregar_geojson_brasil()
     
     if geojson_brasil:
-        fig_map = px.choropleth_mapbox(
-            df_mapa, geojson=geojson_brasil, locations='UF', featureidkey="properties.sigla",
-            color='CRESCIMENTO_PCT', color_continuous_scale="RdBu",
-            mapbox_style="carto-positron", zoom=3, center={"lat": -14.235, "lon": -51.925},
-            labels={'CRESCIMENTO_PCT': 'Crescimento Médio (%)'}
-        )
-        fig_map.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
-        st.plotly_chart(fig_map, use_container_width=True)
+        try:
+            # Trocado de 'choropleth_mapbox' para 'choropleth' nativo (mais estável e sem necessidade de token)
+            fig_map = px.choropleth(
+                df_mapa, 
+                geojson=geojson_brasil, 
+                locations='UF', 
+                featureidkey="properties.sigla",
+                color='CRESCIMENTO_PCT', 
+                color_continuous_scale="RdBu",
+                scope="south america",
+                labels={'CRESCIMENTO_PCT': 'Crescimento Médio (%)'}
+            )
+            # Foca o mapa exatamente nos limites do Brasil
+            fig_map.update_geos(fitbounds="locations", visible=False)
+            fig_map.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
+            
+            st.plotly_chart(fig_map, use_container_width=True)
+            
+        except Exception as e:
+            # Trava de segurança: se o mapa falhar por qualquer motivo na nuvem, exibe um gráfico de barras no lugar
+            st.warning("O mapa 3D não pôde ser carregado. Exibindo visão em barras:")
+            fig_alt = px.bar(
+                df_mapa.sort_values('CRESCIMENTO_PCT', ascending=True), 
+                x='CRESCIMENTO_PCT', 
+                y='UF', 
+                orientation='h',
+                color='CRESCIMENTO_PCT',
+                color_continuous_scale="RdBu"
+            )
+            st.plotly_chart(fig_alt, use_container_width=True)
     else:
-        st.info("Carregando base cartográfica...")
+        st.info("Base cartográfica indisponível no momento.")
 
 with col_piramide:
     st.subheader("⚖️ Pirâmide Etária Interativa (Projeção)")
