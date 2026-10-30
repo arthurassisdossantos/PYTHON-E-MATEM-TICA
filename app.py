@@ -13,53 +13,59 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Caminho padrão do arquivo caso esteja no repositório
 CAMINHO_PADRAO = "CD2022_Populacao_2010_Compatibilizada_20231222.xlsx"
 
 # ==============================================================================
-# 2. FUNÇÕES DE LEITURA E LIMPEZA COM PANDAS
+# 2. FUNÇÃO DE LEITURA INTELIGENTE COM PANDAS
 # ==============================================================================
 @st.cache_data
 def carregar_dados_populacao(caminho_ou_arquivo):
     """
-    Lê a planilha do Censo do IBGE e padroniza as colunas para análise.
-    Ignora as linhas de cabeçalho iniciais e rodapés comuns em planilhas do IBGE.
+    Leitor dinâmico: procura automaticamente a linha de cabeçalho correta 
+    e filtra notas de rodapé de planilhas do IBGE.
     """
     try:
-        # Adicionado engine='openpyxl' explicitamente para evitar erros no Streamlit Cloud
-        df = pd.read_excel(caminho_ou_arquivo, skiprows=4, skipfooter=10, engine='openpyxl')
+        # 1. Lê a planilha bruta sem cabeçalho para varrer as linhas
+        df_raw = pd.read_excel(caminho_ou_arquivo, engine='openpyxl', header=None)
         
-        # Renomear colunas para facilitar manipulação baseado no padrão do IBGE
-        colunas_esperadas = ["UF", "COD_UF", "COD_MUN", "MUNICÍPIO", "POP_2010", "POP_2022"]
+        # 2. Procura automaticamente onde começam as colunas (Ex: 'MUNICÍPIO')
+        linha_cabecalho = 0
+        for i in range(min(20, len(df_raw))):
+            linha_str = ' '.join(df_raw.iloc[i].astype(str).str.upper())
+            if 'MUNIC' in linha_str and ('2022' in linha_str or 'POP' in linha_str):
+                linha_cabecalho = i
+                break
+                
+        # 3. Isola os dados a partir da linha encontrada e pega as 6 primeiras colunas
+        df = df_raw.iloc[linha_cabecalho + 1:, :6].copy()
         
-        # Ajusta o número de colunas lidas (pega as 6 primeiras que costumam ter os dados chave)
-        df = df.iloc[:, :6] 
-        df.columns = colunas_esperadas
+        # 4. Força os nomes corretos para o dashboard funcionar
+        df.columns = ["UF", "COD_UF", "COD_MUN", "MUNICÍPIO", "POP_2010", "POP_2022"]
         
-        # Limpeza e conversão de tipos
+        # 5. Remove rodapés filtrando apenas linhas onde COD_UF é numérico válido
+        df = df[pd.to_numeric(df['COD_UF'], errors='coerce').notnull()].copy()
         df = df.dropna(subset=['UF', 'MUNICÍPIO'])
+        
+        # 6. Converte as colunas de população para número matemático
         df['POP_2010'] = pd.to_numeric(df['POP_2010'], errors='coerce').fillna(0)
         df['POP_2022'] = pd.to_numeric(df['POP_2022'], errors='coerce').fillna(0)
         
-        # Cálculos de crescimento
+        # 7. Calcula os indicadores
         df['CRESCIMENTO_ABS'] = df['POP_2022'] - df['POP_2010']
         df['CRESCIMENTO_PCT'] = ((df['POP_2022'] - df['POP_2010']) / df['POP_2010'] * 100).round(2)
-        
-        # Tratar casos de divisão por zero
         df.loc[df['POP_2010'] == 0, 'CRESCIMENTO_PCT'] = 0 
         
         return df
     except Exception as e:
-        # Exibe o erro técnico exato na tela para facilitar a correção
-        st.error(f"🚨 Erro detalhado do Python ao ler o arquivo: {e}")
-        return None
+        st.error(f"🚨 Erro técnico ao processar: {e}")
+        return pd.DataFrame()
 
 # ==============================================================================
-# 3. BARRA LATERAL (SIDEBAR) - CARREGAMENTO DE DADOS E FILTROS
+# 3. BARRA LATERAL (SIDEBAR) E VALIDAÇÃO DE ARQUIVO
 # ==============================================================================
 st.sidebar.title("📌 Menu & Filtros")
-
 st.sidebar.subheader("📂 Base de Dados")
+
 file_populacao = st.sidebar.file_uploader(
     "Upload Arquivo IBGE (CD2022_Populacao...):", 
     type=["xls", "xlsx", "csv"]
@@ -67,22 +73,27 @@ file_populacao = st.sidebar.file_uploader(
 
 df_pop = None
 
-# Lógica de carregamento: arquivo do upload ou caminho padrão local/nuvem
 if file_populacao is not None:
     df_pop = carregar_dados_populacao(file_populacao)
 elif os.path.exists(CAMINHO_PADRAO):
     df_pop = carregar_dados_populacao(CAMINHO_PADRAO)
 else:
     st.warning("⚠️ **Aguardando base de dados.**")
-    st.info(f"Faça o upload do arquivo `{CAMINHO_PADRAO}` na barra lateral para iniciar a análise.")
+    st.info(f"Faça o upload do arquivo `{CAMINHO_PADRAO}` para iniciar.")
     st.stop()
 
+# Tela de diagnóstico em caso de falha estrutural total
 if df_pop is None or df_pop.empty:
-    st.error("❌ Não foi possível extrair dados válidos do arquivo. Se houver um erro vermelho acima, verifique o motivo (ex: abas ou formato).")
+    st.error("❌ Os dados da planilha não puderam ser extraídos corretamente. Veja as 20 primeiras linhas do seu arquivo bruto abaixo:")
+    try:
+        arquivo_leitura = file_populacao if file_populacao else CAMINHO_PADRAO
+        raw_df = pd.read_excel(arquivo_leitura, engine='openpyxl', header=None)
+        st.dataframe(raw_df.head(20), use_container_width=True)
+    except:
+        pass
     st.stop()
 
 st.sidebar.markdown("---")
-# Filtros Geográficos
 ufs_disponiveis = sorted(df_pop['UF'].unique())
 ufs_selecionadas = st.sidebar.multiselect(
     "Filtre por Estado (UF):", 
@@ -90,10 +101,7 @@ ufs_selecionadas = st.sidebar.multiselect(
     default=ufs_disponiveis[:5] if len(ufs_disponiveis) > 5 else ufs_disponiveis
 )
 
-if ufs_selecionadas:
-    df_filtrado = df_pop[df_pop['UF'].isin(ufs_selecionadas)].copy()
-else:
-    df_filtrado = df_pop.copy()
+df_filtrado = df_pop[df_pop['UF'].isin(ufs_selecionadas)].copy() if ufs_selecionadas else df_pop.copy()
 
 # ==============================================================================
 # 4. PÁGINA PRINCIPAL - KPIS E VISUALIZAÇÕES
@@ -101,7 +109,6 @@ else:
 st.title("📊 Painel de Crescimento Demográfico (2010 - 2022)")
 st.markdown("Análise baseada nos dados do Censo IBGE para identificação de padrões de crescimento populacional municipal.")
 
-# --- Seção de KPIs ---
 st.subheader("📌 Indicadores Gerais (UFs Selecionadas)")
 col1, col2, col3, col4 = st.columns(4)
 
@@ -119,11 +126,10 @@ col4.metric("Maior Retração %", f"{municipio_menor_crescimento['MUNICÍPIO']}-
 
 st.markdown("---")
 
-# --- Seção de Gráficos ---
 col_graf1, col_graf2 = st.columns(2)
 
 with col_graf1:
-    st.subheader("Top 10 Municípios (Maior Crescimento Absoluto)")
+    st.subheader("Top 10 Municípios (Crescimento Absoluto)")
     top10_abs = df_filtrado.nlargest(10, 'CRESCIMENTO_ABS')
     fig_bar = px.bar(
         top10_abs, 
@@ -132,8 +138,7 @@ with col_graf1:
         color='UF',
         orientation='h',
         text_auto='.2s',
-        labels={'CRESCIMENTO_ABS': 'Aumento Populacional (hab)', 'MUNICÍPIO': ''},
-        title="Cidades que mais ganharam habitantes"
+        labels={'CRESCIMENTO_ABS': 'Aumento (hab)', 'MUNICÍPIO': ''}
     )
     fig_bar.update_layout(yaxis={'categoryorder':'total ascending'})
     st.plotly_chart(fig_bar, use_container_width=True)
@@ -147,8 +152,7 @@ with col_graf2:
         color='UF',
         points="all", 
         hover_data=['MUNICÍPIO', 'POP_2022'],
-        labels={'CRESCIMENTO_PCT': 'Crescimento (%)'},
-        title="Distribuição do Crescimento Populacional Relativo"
+        labels={'CRESCIMENTO_PCT': 'Crescimento (%)'}
     )
     st.plotly_chart(fig_box, use_container_width=True)
 
@@ -163,16 +167,13 @@ fig_line = px.line(
     x="Ano", 
     y="População", 
     color="UF", 
-    markers=True,
-    title="Evolução da População 2010-2022 por UF"
+    markers=True
 )
 st.plotly_chart(fig_line, use_container_width=True)
 
-# --- Seção de Dados Tabulares ---
 with st.expander("Visualizar Tabela Completa de Dados"):
     st.dataframe(df_filtrado.sort_values(by="CRESCIMENTO_PCT", ascending=False), use_container_width=True)
 
-# --- Seção de Contexto (Requisito da Persona) ---
 st.markdown("---")
 st.subheader("📰 Contexto: A Transição Demográfica no Brasil")
 col_noticia1, col_noticia2 = st.columns([2, 1])
