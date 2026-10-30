@@ -26,8 +26,8 @@ def carregar_dados_populacao(caminho_ou_arquivo):
     Ignora as linhas de cabeçalho iniciais e rodapés comuns em planilhas do IBGE.
     """
     try:
-        # Tenta carregar o arquivo ignorando o cabeçalho complexo (ajuste o skiprows se necessário)
-        df = pd.read_excel(caminho_ou_arquivo, skiprows=4, skipfooter=10)
+        # Adicionado engine='openpyxl' explicitamente para evitar erros no Streamlit Cloud
+        df = pd.read_excel(caminho_ou_arquivo, skiprows=4, skipfooter=10, engine='openpyxl')
         
         # Renomear colunas para facilitar manipulação baseado no padrão do IBGE
         colunas_esperadas = ["UF", "COD_UF", "COD_MUN", "MUNICÍPIO", "POP_2010", "POP_2022"]
@@ -50,7 +50,8 @@ def carregar_dados_populacao(caminho_ou_arquivo):
         
         return df
     except Exception as e:
-        st.error(f"Erro ao processar o arquivo: {e}")
+        # Exibe o erro técnico exato na tela para facilitar a correção
+        st.error(f"🚨 Erro detalhado do Python ao ler o arquivo: {e}")
         return None
 
 # ==============================================================================
@@ -77,7 +78,7 @@ else:
     st.stop()
 
 if df_pop is None or df_pop.empty:
-    st.error("Não foi possível extrair dados válidos do arquivo. Verifique o formato.")
+    st.error("❌ Não foi possível extrair dados válidos do arquivo. Se houver um erro vermelho acima, verifique o motivo (ex: abas ou formato).")
     st.stop()
 
 st.sidebar.markdown("---")
