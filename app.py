@@ -16,41 +16,30 @@ st.set_page_config(
 CAMINHO_PADRAO = "CD2022_Populacao_2010_Compatibilizada_20231222.xlsx"
 
 # ==============================================================================
-# 2. FUNÇÃO DE LEITURA INTELIGENTE COM PANDAS
+# 2. FUNÇÃO DE LEITURA BASEADA NA ESTRUTURA EXATA DO ARQUIVO
 # ==============================================================================
 @st.cache_data
 def carregar_dados_populacao(caminho_ou_arquivo):
-    """
-    Leitor dinâmico: procura automaticamente a linha de cabeçalho correta 
-    e filtra notas de rodapé de planilhas do IBGE.
-    """
     try:
-        # 1. Lê a planilha bruta sem cabeçalho para varrer as linhas
+        # 1. Lê a planilha bruta sem cabeçalho
         df_raw = pd.read_excel(caminho_ou_arquivo, engine='openpyxl', header=None)
         
-        # 2. Procura automaticamente onde começam as colunas (Ex: 'MUNICÍPIO')
-        linha_cabecalho = 0
-        for i in range(min(20, len(df_raw))):
-            linha_str = ' '.join(df_raw.iloc[i].astype(str).str.upper())
-            if 'MUNIC' in linha_str and ('2022' in linha_str or 'POP' in linha_str):
-                linha_cabecalho = i
-                break
-                
-        # 3. Isola os dados a partir da linha encontrada e pega as 6 primeiras colunas
-        df = df_raw.iloc[linha_cabecalho + 1:, :6].copy()
+        # 2. Com base na imagem, os dados começam na linha 4 (índice 3)
+        # E as colunas corretas são: 1(UF), 2(COD_UF), 3(COD_MUN), 4(NOME), 6(POP_2010), 7(POP_2022)
+        df = df_raw.iloc[3:, [1, 2, 3, 4, 6, 7]].copy()
         
-        # 4. Força os nomes corretos para o dashboard funcionar
+        # 3. Renomeia as colunas para o padrão do nosso sistema
         df.columns = ["UF", "COD_UF", "COD_MUN", "MUNICÍPIO", "POP_2010", "POP_2022"]
         
-        # 5. Remove rodapés filtrando apenas linhas onde COD_UF é numérico válido
+        # 4. Remove linhas de rodapé ou cabeçalhos extras (onde COD_UF não é número)
         df = df[pd.to_numeric(df['COD_UF'], errors='coerce').notnull()].copy()
         df = df.dropna(subset=['UF', 'MUNICÍPIO'])
         
-        # 6. Converte as colunas de população para número matemático
+        # 5. Converte as colunas de população para número matemático
         df['POP_2010'] = pd.to_numeric(df['POP_2010'], errors='coerce').fillna(0)
         df['POP_2022'] = pd.to_numeric(df['POP_2022'], errors='coerce').fillna(0)
         
-        # 7. Calcula os indicadores
+        # 6. Calcula os indicadores (Crescimento e Porcentagem)
         df['CRESCIMENTO_ABS'] = df['POP_2022'] - df['POP_2010']
         df['CRESCIMENTO_PCT'] = ((df['POP_2022'] - df['POP_2010']) / df['POP_2010'] * 100).round(2)
         df.loc[df['POP_2010'] == 0, 'CRESCIMENTO_PCT'] = 0 
@@ -82,9 +71,8 @@ else:
     st.info(f"Faça o upload do arquivo `{CAMINHO_PADRAO}` para iniciar.")
     st.stop()
 
-# Tela de diagnóstico em caso de falha estrutural total
 if df_pop is None or df_pop.empty:
-    st.error("❌ Os dados da planilha não puderam ser extraídos corretamente. Veja as 20 primeiras linhas do seu arquivo bruto abaixo:")
+    st.error("❌ Os dados da planilha não puderam ser extraídos corretamente. Veja o formato bruto abaixo:")
     try:
         arquivo_leitura = file_populacao if file_populacao else CAMINHO_PADRAO
         raw_df = pd.read_excel(arquivo_leitura, engine='openpyxl', header=None)
